@@ -50,8 +50,7 @@ def get_security_group_id(botocore_ec2_client, security_group_name: str) -> str:
         )
     return res["SecurityGroups"][0]["GroupId"]
 
-
-if __name__ == "__main__":
+def setup_parser():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawTextHelpFormatter,
         description=dedent(
@@ -137,7 +136,13 @@ if __name__ == "__main__":
         choices=["FARGATE", "FARGATE_SPOT"],
     )
     args = parser.parse_args()
-    print("Arguments valid")
+    print("Arguments parsed successfully")
+
+    return args
+
+
+if __name__ == "__main__":
+    args = setup_parser()
 
     print("Finding public subnet ids")
     session = botocore.session.Session(profile=args.profile)
@@ -152,36 +157,43 @@ if __name__ == "__main__":
 
     print("Submitting task to cluster")
     ecs_client = session.create_client("ecs")
+    
+    network_config={
+        "awsvpcConfiguration": {
+            "subnets": public_subnet_ids,
+            "securityGroups": [security_group_id],
+            "assignPublicIp": "ENABLED",
+        }
+    }
+
+    overrides_config={
+        "containerOverrides": [
+            {
+                "name": args.container_name,
+                "command": args.command.split(" "),
+                "cpu": args.cpu,
+                "memory": args.memory,
+            },
+        ],
+        "cpu": str(args.cpu),
+        "memory": str(args.memory),
+    }
+    
     response = ecs_client.run_task(
         capacityProviderStrategy=[{"capacityProvider": args.capacity_provider}],
         cluster=args.cluster,
         count=1,
-        networkConfiguration={
-            "awsvpcConfiguration": {
-                "subnets": public_subnet_ids,
-                "securityGroups": [security_group_id],
-                "assignPublicIp": "ENABLED",
-            }
-        },
-        overrides={
-            "containerOverrides": [
-                {
-                    "name": args.container_name,
-                    "command": args.command.split(" "),
-                    "cpu": args.cpu,
-                    "memory": args.memory,
-                },
-            ],
-            "cpu": str(args.cpu),
-            "memory": str(args.memory),
-        },
+        networkConfiguration=network_config,
+        overrides=overrides_config,
         platformVersion="1.4.0",
         taskDefinition=args.task_definition,
     )
     task_arn = response["tasks"][0]["taskArn"]
     print(f"Task arn: {task_arn}")
+
     if args.wait_tasks_stopped:
         print("Waiting until task stops")
         waiter = ecs_client.get_waiter("tasks_stopped")
         waiter.wait(cluster=args.cluster, tasks=[task_arn])
+    
     print("Done")

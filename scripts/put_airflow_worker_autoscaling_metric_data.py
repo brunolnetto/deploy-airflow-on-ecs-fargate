@@ -83,10 +83,7 @@ def get_capacity_provider_reservation(
         return 200
     return m / n * 100
 
-
-# Publish a custom metric for worker scaling
-# https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/publishingMetrics.html
-if __name__ == "__main__":
+def parse_setup():
     parser = argparse.ArgumentParser()
     parser.add_argument("--namespace", type=str, required=True, help="Metric namespace")
     parser.add_argument(
@@ -115,6 +112,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
     logging.info("Arguments parsed successfully")
 
+    return args
+
+
+# Publish a custom metric for worker scaling
+# https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/publishingMetrics.html
+if __name__ == "__main__":
+    args = parse_setup()
+
     session = botocore.session.get_session()
     cloudwatch = session.create_client("cloudwatch", region_name=args.region_name)
     ecs = session.create_client("ecs", region_name=args.region_name)
@@ -133,41 +138,39 @@ if __name__ == "__main__":
         logging.info(f"{args.metric_name}: {metric_value}")
 
         # We scale airflow workers based on this metric.
-        cloudwatch.put_metric_data(
-            Namespace=args.namespace,
-            MetricData=[
-                {
-                    "MetricName": args.metric_name,
-                    "Dimensions": [
-                        {
-                            "Name": "ClusterName",
-                            "Value": args.cluster_name,
-                        }
-                    ],
-                    "Value": metric_value,
-                    "Unit": args.metric_unit,
-                },
-            ],
-        )
+        metric_data=[
+            {
+                "MetricName": args.metric_name,
+                "Dimensions": [
+                    {
+                        "Name": "ClusterName",
+                        "Value": args.cluster_name,
+                    }
+                ],
+                "Value": metric_value,
+                "Unit": args.metric_unit,
+            },
+        ]
+        
+        cloudwatch.put_metric_data(Namespace=args.namespace, MetricData=metric_data)
 
         # None of our services use the NumberOfActiveRunningTasks metric, but it's nice
         # to be able to visualize the relationship with CapacityProviderReservation.
-        cloudwatch.put_metric_data(
-            Namespace=args.namespace,
-            MetricData=[
-                {
-                    "MetricName": "NumberOfActiveRunningTasks",
-                    "Dimensions": [
-                        {
-                            "Name": "ClusterName",
-                            "Value": args.cluster_name,
-                        }
-                    ],
-                    "Value": task_count,
-                    "Unit": "Count",
-                },
-            ],
-        )
+        metric_data=[
+            {
+                "MetricName": "NumberOfActiveRunningTasks",
+                "Dimensions": [
+                    {
+                        "Name": "ClusterName",
+                        "Value": args.cluster_name,
+                    }
+                ],
+                "Value": task_count,
+                "Unit": "Count",
+            },
+        ]
+
+        cloudwatch.put_metric_data(Namespace=args.namespace, MetricData=metric_data)
 
         logging.info(f"Sleeping for {args.period} seconds")
         time.sleep(args.period)
